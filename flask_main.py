@@ -16,17 +16,20 @@ import flask
 from flask import render_template
 from flask import request
 from flask import url_for
+from flask import redirect
 
 import json
 import logging
+import operator
+import re
 
 # Date handling 
 import arrow # Replacement for datetime, based on moment.js
-import datetime # But we may still need time
 from dateutil import tz  # For interpreting local times
 
 # Mongo database
 from pymongo import MongoClient
+from bson.objectid import ObjectId
 
 
 ###
@@ -42,7 +45,7 @@ try:
     collection = db.dated
 
 except:
-    print("Failure opening database.  Is Mongo running? Correct password?")
+    print("Failure opening database. Is Mongo running? Correct password?")
     sys.exit(1)
 
 import uuid
@@ -57,17 +60,30 @@ app.secret_key = str(uuid.uuid4())
 def index():
   app.logger.debug("Main page entry")
   flask.session['memos'] = get_memos()
-  for memo in flask.session['memos']:
-      app.logger.debug("Memo: " + str(memo))
+#  for memo in flask.session['memos']:
+#      app.logger.debug("Memo: " + str(memo))
   return flask.render_template('index.html')
 
 
-# We don't have an interface for creating memos yet
-# @app.route("/create")
-# def create():
-#     app.logger.debug("Create")
-#     return flask.render_template('create.html')
+@app.route("/create")
+def render_create_page():
+    app.logger.debug("Create")
+    return flask.render_template('create.html')
+    
+@app.route("/_delete", methods=["POST"])
+def delete():
+    to_delete = []
+    for memo_id in request.form:
+        to_delete.append(memo_id)
+    remove_memos(to_delete)
+    return redirect("/index", 303)
 
+@app.route("/_create", methods=["POST"])
+def handle_create_request():
+    date = request.form["Date"]
+    memo = request.form["Memo"]
+    insert_memo(date, memo)
+    return redirect("/index", 303)
 
 @app.errorhandler(404)
 def page_not_found(error):
@@ -82,15 +98,6 @@ def page_not_found(error):
 #
 #################
 
-# NOT TESTED with this application; may need revision 
-#@app.template_filter( 'fmtdate' )
-# def format_arrow_date( date ):
-#     try: 
-#         normal = arrow.get( date )
-#         return normal.to('local').format("ddd MM/DD/YYYY")
-#     except:
-#         return "(bad date)"
-
 @app.template_filter( 'humanize' )
 def humanize_arrow_date( date ):
     """
@@ -100,14 +107,21 @@ def humanize_arrow_date( date ):
     need to catch 'today' as a special case. 
     """
     try:
-        then = arrow.get(date).to('local')
-        now = arrow.utcnow().to('local')
+        then = arrow.get(date).to("US/Pacific")
+        now = arrow.now("US/Pacific")
+        print("Then: {} Now:{}".format(then, now))
         if then.date() == now.date():
             human = "Today"
-        else: 
-            human = then.humanize(now)
-            if human == "in a day":
+        elif then.date() == now.replace(days=+1).date():
+            human = "Tomorrow"
+        elif then.date() == now.replace(days=-1).date():
+            human = "Yesterday"
+        else:
+            human = then.humanize(now).capitalize()
+            if human == "In a day":
                 human = "Tomorrow"
+            elif human == "A day ago":
+                human = "Yesterday"
     except: 
         human = date
     return human
@@ -120,15 +134,41 @@ def humanize_arrow_date( date ):
 ##############
 def get_memos():
     """
-    Returns all memos in the database, in a form that
+    Returns all memos in the database, sorted by date, in a form that
     can be inserted directly in the 'session' object.
     """
     records = [ ]
     for record in collection.find( { "type": "dated_memo" } ):
-        record['date'] = arrow.get(record['date']).isoformat()
-        del record['_id']
+        record['date'] = arrow.get(record['date']).replace(tzinfo=tz.gettz("US/Pacific")).isoformat()
+        record['_id'] = str(record['_id'])
         records.append(record)
-    return records 
+    return sorted(records, key=operator.itemgetter('date'))
+    
+def remove_memos(ids_to_remove):
+    """
+    Remove all memos whose IDs are contained in the list.
+    
+    ids_to_remove should be a list of hexadecimal object IDs, as strings
+    """
+    for id in ids_to_remove:
+        collection.remove({"type":"dated_memo", "_id":ObjectId(id)})
+        # We confirm the type is dated_memo, because otherwise users could
+        # delete arbitrary objects from the database if they knew the IDs
+        
+def insert_memo(date, text):
+    """
+    Inserts a memo in the mongoDB memo database.
+    
+    "date" should be a date, as a string, formatted like yyyy-mm-dd.    
+    "text" is the text of the memo.
+    """
+    datePattern = re.compile(r"\d\d\d\d-\d\d-\d\d")
+    if datePattern.match(date):
+        record = { "type": "dated_memo", 
+                   "date": date,
+                   "text": text
+                 }
+        collection.insert(record)
 
 
 if __name__ == "__main__":

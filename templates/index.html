@@ -38,21 +38,44 @@
 
 <h1>Memos</h1>
 
+
 {% if session.memos %}
-    {% for memo in session.memos %}
+  <form action='_delete' method='post'>
+  <div class="row">
+      <div class="col-md-6">
+      <a href="/create" class="btn btn-default">Create a new memo</a>
+      </div>
+      <div class="col-md-6">
+      <span class="pull-right">
+      <input type="submit" class="btn btn-default" value="Delete selected memos">
+      </span>
+      </div>
+  </div> <!-- row -->
+  {% for memo in session.memos %}
   <div class="memo">
+    {% if loop.index is divisibleby 2 %}
+  <div class="even">
+    {% else %}
+  <div class="odd">
+    {% endif %}
   <div class="row">
   <div class="col-md-2">
     {{ memo.date | humanize }}
   </div>
-  <div class="col-md-10">
+  <div class="col-md-9">
     {{ memo.text }}
   </div>
+  <div class="col-md-1">
+    <input type="checkbox" name="{{memo._id}}">
+  </div>
   </div> <!-- row -->
+  </div> <!-- even/odd -->
   </div> <!-- memo -->
   {% endfor %}
+  </form>
 {% else %}
-  <p>No memos for you. </p>  
+  <p>No memos for you. </p>
+  <a href="/create" class="btn btn-default">Create a new memo</a>
 {% endif %}
 
  
